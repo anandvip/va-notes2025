@@ -540,6 +540,28 @@ class NotesApp {
   }
 
   /**
+   * Extract hashtags from content and convert them to tags
+   * @param {string} content - Note content to extract tags from
+   * @returns {Array} - Array of tags without the # symbol
+   */
+  extractTags(content) {
+    // Create a temporary div to handle HTML content
+    const div = document.createElement('div');
+    div.innerHTML = content;
+    const text = div.textContent || div.innerText || '';
+    
+    // Find all hashtags (word starting with # and containing letters, numbers, or underscores)
+    const hashtagRegex = /#(\w+)/g;
+    const matches = text.match(hashtagRegex);
+    
+    // Return unique tags without the # symbol
+    if (matches) {
+      return [...new Set(matches.map(tag => tag.substring(1)))];
+    }
+    return [];
+  }
+
+  /**
    * Update a note's field
    * @param {number} id - Note ID
    * @param {string} field - Field to update
@@ -552,6 +574,18 @@ class NotesApp {
     const oldValue = note[field];
     note[field] = value;
     note.date = new Date().toLocaleString();
+    
+    // If content was updated, extract tags
+    if (field === 'content') {
+      // Extract hashtags from content
+      const extractedTags = this.extractTags(value);
+      
+      // Update note tags
+      note.tags = extractedTags;
+      
+      // Update global tags collection
+      this.updateTags();
+    }
     
     // Handle version history for content changes
     if (field === 'content' && value !== oldValue && this.versioningInterval > 0) {
