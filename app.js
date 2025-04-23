@@ -1,4 +1,60 @@
 /**
+   * Sanitize HTML content to prevent XSS attacks
+   * @param {string} html - HTML content to sanitize
+   * @returns {string} - Sanitized HTML
+   */
+  sanitizeHtml(html) {
+    if (!html) return '';
+    
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    
+    // Remove script tags
+    const scripts = temp.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+    
+    // Remove potentially dangerous attributes
+    const allElements = temp.querySelectorAll('*');
+    const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 
+                           'onkeydown', 'onkeypress', 'onkeyup', 'onchange', 'onsubmit',
+                           'javascript:', 'data-', 'href="javascript'];
+    
+    allElements.forEach(el => {
+      // Remove dangerous event handler attributes
+      dangerousAttrs.forEach(attr => {
+        if (attr.endsWith(':')) {
+          // Check for javascript: protocol in attributes
+          for (let i = 0; i < el.attributes.length; i++) {
+            const attrName = el.attributes[i].name;
+            const attrValue = el.attributes[i].value;
+            if (attrValue.toLowerCase().includes(attr)) {
+              el.removeAttribute(attrName);
+            }
+          }
+        } else if (attr.startsWith('href="')) {
+          // Check for javascript: in href
+          const href = el.getAttribute('href');
+          if (href && href.toLowerCase().includes('javascript:')) {
+            el.removeAttribute('href');
+          }
+        } else if (attr.startsWith('data-')) {
+          // Remove data attributes that might contain code
+          const dataAttrs = [];
+          for (let i = 0; i < el.attributes.length; i++) {
+            if (el.attributes[i].name.startsWith('data-')) {
+              dataAttrs.push(el.attributes[i].name);
+            }
+          }
+          dataAttrs.forEach(dataAttr => el.removeAttribute(dataAttr));
+        } else {
+          // Remove event handlers
+          el.removeAttribute(attr);
+        }
+      });
+    });
+    
+    return temp.innerHTML;
+  }/**
  * Modern Notes Application
  * A note-taking app with tagging, projects, and version control
  */
@@ -350,9 +406,20 @@ class NotesApp {
    * Set up the database and load initial data
    */
   setupDatabase() {
-    this.db = new DatabaseService('ModernNotesDB', 1, () => {
-      this.loadData();
-    });
+    try {
+      this.db = new DatabaseService('ModernNotesDB', 1, () => {
+        this.loadData();
+      });
+    } catch (error) {
+      console.error('Failed to initialize database:', error);
+      this.toastService.show('Failed to connect to database. Some features may not work.', 'error');
+      // Basic fallback - empty arrays for notes and projects
+      this.notes = [];
+      this.projects = [];
+      this.renderProjects();
+      this.renderNotes();
+      this.renderTags();
+    }
   }
 
   /**
@@ -550,13 +617,13 @@ class NotesApp {
     div.innerHTML = content;
     const text = div.textContent || div.innerText || '';
     
-    // Find all hashtags (word starting with # and containing letters, numbers, or underscores)
-    const hashtagRegex = /#(\w+)/g;
+    // Find all hashtags (word starting with # and containing letters, numbers, underscores, or hyphens)
+    const hashtagRegex = /#([\w-]+)/g;
     const matches = text.match(hashtagRegex);
     
-    // Return unique tags without the # symbol
+    // Return unique tags without the # symbol, converted to lowercase for consistency
     if (matches) {
-      return [...new Set(matches.map(tag => tag.substring(1)))];
+      return [...new Set(matches.map(tag => tag.substring(1).toLowerCase()))];
     }
     return [];
   }
@@ -572,33 +639,52 @@ class NotesApp {
     if (!note) return;
     
     const oldValue = note[field];
+    
+    // Sanitize HTML content if needed
+    if (field === 'content') {
+      value = this.sanitizeHtml(value);
+    }
+    
     note[field] = value;
     note.date = new Date().toLocaleString();
     
     // If content was updated, extract tags
     if (field === 'content') {
-      // Extract hashtags from content
-      const extractedTags = this.extractTags(value);
-      
-      // Update note tags
-      note.tags = extractedTags;
-      
-      // Update global tags collection
-      this.updateTags();
+      try {
+        // Extract hashtags from content
+        const extractedTags = this.extractTags(value);
+        
+        // Update note tags
+        note.tags = extractedTags;
+        
+        // Update global tags collection
+        this.updateTags();
+      } catch (error) {
+        console.error('Error extracting tags:', error);
+        // Continue with update even if tag extraction fails
+      }
     }
     
     // Handle version history for content changes
     if (field === 'content' && value !== oldValue && this.versioningInterval > 0) {
-      const lastVersion = note.versions[note.versions.length - 1];
-      const timeSinceLastVersion = Date.now() - new Date(lastVersion.date).getTime();
-      
-      if (timeSinceLastVersion >= this.versioningInterval) {
-        // Add new version
-        note.versions.push({ content: value, date: note.date });
-      } else {
-        // Update latest version
-        lastVersion.content = value;
-        lastVersion.date = note.date;
+      try {
+        const lastVersion = note.versions[note.versions.length - 1];
+        const timeSinceLastVersion = Date.now() - new Date(lastVersion.date).getTime();
+        
+        if (timeSinceLastVersion >= this.versioningInterval) {
+          // Add new version
+          note.versions.push({ content: value, date: note.date });
+        } else {
+          // Update latest version
+          lastVersion.content = value;
+          lastVersion.date = note.date;
+        }
+      } catch (error) {
+        console.error('Error updating version history:', error);
+        // Ensure note has versions array
+        if (!Array.isArray(note.versions)) {
+          note.versions = [{ content: value, date: note.date }];
+        }
       }
     }
     
@@ -910,15 +996,24 @@ class NotesApp {
         this.updateNote(note.id, 'title', e.target.value);
       });
       
+      // Render note content element
       const contentElement = noteElement.querySelector('.note-content');
       
-      // Use debounce for content updates
+      // Use debounce for content updates to avoid excessive saving
       let contentUpdateTimeout = null;
       contentElement.addEventListener('input', () => {
         clearTimeout(contentUpdateTimeout);
         contentUpdateTimeout = setTimeout(() => {
           this.updateNote(note.id, 'content', contentElement.innerHTML);
-        }, 500); // Small debounce for typing
+        }, 750); // Debounce for 750ms for better performance
+      });
+      
+      // Add contenteditable blur event to ensure saving completes
+      contentElement.addEventListener('blur', () => {
+        if (contentUpdateTimeout) {
+          clearTimeout(contentUpdateTimeout);
+          this.updateNote(note.id, 'content', contentElement.innerHTML);
+        }
       });
       
       const deleteButton = noteElement.querySelector('.delete');
