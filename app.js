@@ -1356,7 +1356,8 @@ NotesApp.prototype.renderNotes = function() {
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.notesApp = new NotesApp();
-}); version of a note
+}); /**
+     * version of a note
      * @param {number} noteId - ID of the note
      * @param {number} versionIndex - Index of the version to restore
      */
