@@ -446,6 +446,8 @@ footer{
 }
 
 /* Responsive adaptations */
+
+
 @media (max-width: 768px) {
     #sidebar {
         width: 100%;
