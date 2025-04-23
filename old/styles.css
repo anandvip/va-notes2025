@@ -441,6 +441,9 @@ span#word-count {
     justify-content: space-between;
     align-items: center;
 }
+footer{
+    text-algn:center;
+}
 
 /* Responsive adaptations */
 @media (max-width: 768px) {
