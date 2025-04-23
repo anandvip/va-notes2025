@@ -1376,4 +1376,4 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Restore the selected version content
         note.content = versionToRestore.content;
-        note.date = new Date().
+        note.date = new Date().toLocaleString();
