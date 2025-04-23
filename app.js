@@ -3,58 +3,32 @@
    * @param {string} html - HTML content to sanitize
    * @returns {string} - Sanitized HTML
    */
-  sanitizeHtml(html) {
-    if (!html) return '';
-    
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
-  }
-    // Remove script tags
-    const scripts = temp.querySelectorAll('script');
-    scripts.forEach(script => script.remove());
-    
-    // Remove potentially dangerous attributes
-    const allElements = temp.querySelectorAll('*');
-    const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 
-                           'onkeydown', 'onkeypress', 'onkeyup', 'onchange', 'onsubmit',
-                           'javascript:', 'data-', 'href="javascript'];
-    
-    allElements.forEach(el => {
-      // Remove dangerous event handler attributes
-      dangerousAttrs.forEach(attr => {
-        if (attr.endsWith(':')) {
-          // Check for javascript: protocol in attributes
-          for (let i = 0; i < el.attributes.length; i++) {
-            const attrName = el.attributes[i].name;
-            const attrValue = el.attributes[i].value;
-            if (attrValue.toLowerCase().includes(attr)) {
-              el.removeAttribute(attrName);
-            }
-          }
-        } else if (attr.startsWith('href="')) {
-          // Check for javascript: in href
-          const href = el.getAttribute('href');
-          if (href && href.toLowerCase().includes('javascript:')) {
-            el.removeAttribute('href');
-          }
-        } else if (attr.startsWith('data-')) {
-          // Remove data attributes that might contain code
-          const dataAttrs = [];
-          for (let i = 0; i < el.attributes.length; i++) {
-            if (el.attributes[i].name.startsWith('data-')) {
-              dataAttrs.push(el.attributes[i].name);
-            }
-          }
-          dataAttrs.forEach(dataAttr => el.removeAttribute(dataAttr));
-        } else {
-          // Remove event handlers
-          el.removeAttribute(attr);
-        }
-      });
+function sanitizeHtml(html) {
+  if (!html) return '';
+  
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  
+  // Remove script tags
+  const scripts = temp.querySelectorAll('script');
+  scripts.forEach(function(script) {
+    script.remove();
+  });
+  
+  // Remove potentially dangerous attributes
+  const allElements = temp.querySelectorAll('*');
+  const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 
+                        'onkeydown', 'onkeypress', 'onkeyup', 'onchange', 'onsubmit',
+                        'javascript:', 'data-', 'href="javascript'];
+  
+  allElements.forEach(function(el) {
+    dangerousAttrs.forEach(function(attr) {
+      el.removeAttribute(attr);
     });
-    
-    return temp.innerHTML;
-  }/**
+  });
+  
+  return temp.innerHTML;
+}/**
  * Modern Notes Application
  * A note-taking app with tagging, projects, and version control
  */
