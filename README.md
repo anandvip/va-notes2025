@@ -1,4 +1,5 @@
 # Notes Application Features
+private notes application no third party library. no cloud storage. just you and your notes. offline tool to make notes, i use it as journaling no **xss** iIndexedDB storage sweet and small application.
 
 ## Data & Persistence
 
