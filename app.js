@@ -8,7 +8,7 @@
     
     const temp = document.createElement('div');
     temp.innerHTML = html;
-    
+  }
     // Remove script tags
     const scripts = temp.querySelectorAll('script');
     scripts.forEach(script => script.remove());
