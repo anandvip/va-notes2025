@@ -294,6 +294,7 @@ span#word-count {
     color: black;
     padding: 0.5rem;
     outline: none;
+    border-radius:0.8rem
 }
 
 #toast-container {
