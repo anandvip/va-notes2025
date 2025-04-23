@@ -162,13 +162,20 @@ class NotesApp {
   setupObservers(){
     ['noteUpdated','noteAdded','noteDeleted'].forEach(ev=>
       this.eventEmitter.on(ev, ()=>{
-        this.renderNotes();this.renderProjects();this.updateTags();
-      })
-    );
-    ['projectAdded','projectDeleted'].forEach(ev=>
-      this.eventEmitter.on(ev, ()=>this.renderProjects())
-    );
-    this.eventEmitter.on('tagSelected', tag=>this.filterByTag(tag));
+        this.renderNotes();this.renderProjects(){this.projectsList.innerHTML='';this.projects.forEach(p=>{const el=document.createElement('div');el.className='project-item';el.dataset.id=p.id;el.textContent=p.name+` (${this.notes.filter(n=>n.projectId===p.id).length})`;el.addEventListener('click',()=>{this.currentProject=p.id;this.renderNotes();this.showToast(`Switched to ${p.name}`,'info');});this.projectsList.appendChild(el);});}
+
+  /**
+   * Render tags in the sidebar
+   */
+  renderTags(){
+    this.tagsContainer.innerHTML = '';
+    Array.from(this.tags).sort().forEach(tag => {
+      const tagEl = document.createElement('div');
+      tagEl.className = `tag ${this.currentTag === tag ? 'active' : ''}`;
+      tagEl.textContent = tag;
+      tagEl.addEventListener('click', () => this.eventEmitter.emit('tagSelected', tag));
+      this.tagsContainer.appendChild(tagEl);
+    });
   }
 
   toggleSidebar(){
