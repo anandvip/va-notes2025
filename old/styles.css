@@ -291,7 +291,7 @@ span#word-count {
     background: linear-gradient(90deg, var(--accent), var(--accent-secondary));;
     border: none;
     border-bottom: 1px solid black;
-    color: black;
+    color: white;
     padding: 0.5rem;
     outline: none;
     border-radius:0.8rem
