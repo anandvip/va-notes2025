@@ -288,10 +288,10 @@ span#word-count {
 }
 
 #author-input {
-    background: transparent;
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary));;
     border: none;
-    border-bottom: 1px solid white;
-    color: white;
+    border-bottom: 1px solid black;
+    color: black;
     padding: 0.5rem;
     outline: none;
 }
