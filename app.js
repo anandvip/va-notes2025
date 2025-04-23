@@ -2,30 +2,7 @@
 // Feature-rich note-taking with project organization, rich text, version control, and more.
 
 class EventEmitter {
-  constructor() {
-    this.events = {};
-  }
-
-  on(eventName, callback) {
-    if (!this.events[eventName]) this.events[eventName] = [];
-    this.events[eventName].push(callback);
-  }
-
-  emit(eventName, data) {
-    (this.events[eventName] || []).forEach(cb => cb(data));
-  }
-
-  off(eventName, callback) {
-    if (!this.events[eventName]) return;
-    if (callback) {
-      this.events[eventName] = this.events[eventName].filter(cb => cb !== callback);
-    } else {
-      delete this.events[eventName];
-    }
-  }
-}
-
-class NotesApp {
+  // ► Added `_listenersAdded` flag to ensure listeners bind only once after data load
   constructor() {
     // State
     this.db = null;
@@ -37,6 +14,7 @@ class NotesApp {
     this.versioningInterval = 5000; // milliseconds
     this._notesLoaded = false;
     this._projectsLoaded = false;
+    this._listenersAdded = false;
 
     this.eventEmitter = new EventEmitter();
     this.sidebarCollapsed = false;
@@ -209,7 +187,19 @@ class NotesApp {
     };
   }
 
+  // ► Listeners are now bound here once both notes and projects have loaded
   checkInitial() {
+    if (this._notesLoaded && this._projectsLoaded) {
+      this.renderProjects();
+      this.renderNotes();
+      this.updateTags();
+      this.updateWordCount();
+      if (!this._listenersAdded) {
+        this.addEventListeners();
+        this.setupObservers();
+        this._listenersAdded = true;
+      }
+    }
     if (this._notesLoaded && this._projectsLoaded) {
       this.renderProjects();
       this.renderNotes();
