@@ -1368,7 +1368,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const versionToRestore = note.versions[versionIndex];
         const newVersion = {
             content: note.content,
-            date: new Date().toLocaleString()
+            note.date: new Date().toLocaleString()
         };
         
         // Add current content as a new version
