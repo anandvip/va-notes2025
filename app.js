@@ -621,3 +621,4 @@ class NotesApp {
         
         // Close the version history modal
         this.versionModal.classList.remove('active');
+    }
