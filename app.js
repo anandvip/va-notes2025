@@ -615,10 +615,764 @@ class NotesApp {
      */
     previewVersion(noteId, versionIndex) {
         const note = this.notes.find(n => n.id === noteId);
-        if (!note) return;
-
+        if (!note) {
+            console.error(`Note with ID ${noteId} not found.`);
+            return;
+        }
+        if (!note.versions || versionIndex < 0 || versionIndex >= note.versions.length) {
+            console.error(`Invalid versionIndex: ${versionIndex}.`);
+            return;
+        }
+        
         const versionToPreview = note.versions[versionIndex];
         
         // Close the version history modal
         this.versionModal.classList.remove('active');
+        
+        // Create a modal to preview the version
+        const previewModal = document.createElement('div');
+        previewModal.className = 'modal active';
+        previewModal.innerHTML = `
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="modal-title">Preview of Version ${versionIndex + 1} - ${versionToPreview.date}</div>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="preview-content">
+                    ${versionToPreview.content}
+                </div>
+                <div style="margin-top: 1rem; text-align: right;">
+                    <button class="restore-preview-btn gradient-button">Restore This Version</button>
+                </div>
+            </div>
+        `;
+        
+        // Add event listeners
+        previewModal.querySelector('.modal-close').addEventListener('click', () => {
+            document.body.removeChild(previewModal);
+            this.versionModal.classList.add('active');
+        });
+        
+        previewModal.querySelector('.restore-preview-btn').addEventListener('click', () => {
+            document.body.removeChild(previewModal);
+            this.restoreVersion(noteId, versionIndex);
+        });
+        
+        document.body.appendChild(previewModal);
     }
+
+    /**
+     * Restore a specific version of a note
+     * @param {number} noteId - ID of the note
+     * @param {number} versionIndex - Index of the version to restore
+     */
+    restoreVersion(noteId, versionIndex) {
+        const note = this.notes.find(n => n.id === noteId);
+        if (!note) return;
+
+        const versionToRestore = note.versions[versionIndex];
+        const newVersion = {
+            content: note.content,
+            date: new Date().toLocaleString()
+        };
+        
+        // Add current content as a new version
+        note.versions.push(newVersion);
+        
+        // Restore the selected version content
+        note.content = versionToRestore.content;
+        note.date = new Date().toLocaleString();
+
+        this.saveToIndexedDB('notes', note)
+            .then(() => {
+                this.eventEmitter.emit('noteUpdated', note);
+                this.closeModals();
+                this.showToast("Version restored", 'success');
+            })
+            .catch(error => this.showToast("Error restoring version: " + error, 'error'));
+    }
+
+    /**
+     * Show modal with all projects in a grid view
+     */
+    showProjectsModal() {
+        this.projectsGrid.innerHTML = '';
+        
+        this.projects.forEach(project => {
+            const projectCard = document.createElement('div');
+            projectCard.className = 'project-card';
+            projectCard.style.setProperty('--project-color', project.color);
+            projectCard.style.setProperty('border-left', `4px solid ${project.color}`);
+            
+            // Count notes in this project
+            const projectNotes = this.notes.filter(note => note.projectId === project.id);
+            
+            projectCard.innerHTML = `
+                <div class="project-card-title">${project.name}</div>
+                <div class="project-card-count">${projectNotes.length} notes</div>
+                <div class="project-card-notes">
+                    ${projectNotes.slice(0, 3).map(note => `
+                        <div class="project-card-note">${note.title}</div>
+                    `).join('')}
+                    ${projectNotes.length > 3 ? `<div class="project-card-note">... and ${projectNotes.length - 3} more</div>` : ''}
+                </div>
+            `;
+            
+            projectCard.addEventListener('click', () => {
+                this.currentProject = project.id;
+                this.renderNotes();
+                this.closeModals();
+                
+                // Find and expand the project in the sidebar
+                const projectElement = document.querySelector(`.project-item[data-id="${project.id}"]`);
+                if (projectElement) {
+                    const projectNotes = projectElement.querySelector('.project-notes');
+                    if (projectNotes && !projectNotes.classList.contains('expanded')) {
+                        projectNotes.classList.add('expanded');
+                    }
+                }
+                
+                this.showToast(`Switched to project: ${project.name}`, 'info');
+            });
+            
+            this.projectsGrid.appendChild(projectCard);
+        });
+        
+        this.projectsModal.classList.add('active');
+    }
+
+    /**
+     * Close all modals
+     */
+    closeModals() {
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.classList.remove('active');
+        });
+    }
+
+    /**
+     * Apply formatting to note content
+     * @param {number} noteId - ID of the note
+     * @param {string} format - Format to apply
+     */
+    applyFormatting(noteId, format) {
+        const noteContent = document.querySelector(`.note[data-id="${noteId}"] .note-content`);
+        const selection = window.getSelection();
+        
+        if (!selection.rangeCount) return;
+        
+        const range = selection.getRangeAt(0);
+        
+        if (range.toString().length > 0) {
+            switch(format) {
+                case 'bold':
+                    document.execCommand('bold', false, null);
+                    break;
+                case 'italic':
+                    document.execCommand('italic', false, null);
+                    break;
+                case 'underline':
+                    document.execCommand('underline', false, null);
+                    break;
+                case 'strikethrough':
+                    document.execCommand('strikeThrough', false, null);
+                    break;
+                case 'h1':
+                case 'h2':
+                case 'h3':
+                case 'h4':
+                case 'p':
+                    document.execCommand('formatBlock', false, `<${format}>`);
+                    break;
+                case 'ul':
+                    document.execCommand('insertUnorderedList', false, null);
+                    break;
+                case 'ol':
+                    document.execCommand('insertOrderedList', false, null);
+                    break;
+            }
+            
+            this.updateNote(noteId, 'content', noteContent.innerHTML);
+        }
+    }
+
+    /**
+     * Update word count display
+     */
+    updateWordCount() {
+        let wordCount = 0;
+        let noteCount = this.notes.length;
+        
+        // Count words in all notes
+        this.notes.forEach(note => {
+            const text = note.content.replace(/<[^>]*>/g, '').trim();
+            const words = text.split(/\s+/).filter(word => word.length > 0);
+            wordCount += words.length;
+        });
+        
+        // Update UI
+        this.wordCountElement.textContent = `${wordCount} word${wordCount !== 1 ? 's' : ''}`;
+        this.statsCountElement.textContent = `${noteCount} note${noteCount !== 1 ? 's' : ''}`;
+    }
+
+    /**
+     * Render projects in the sidebar
+     */
+    renderProjects() {
+        this.projectsList.innerHTML = '';
+        
+        this.projects.forEach(project => {
+            const projectElement = document.createElement('div');
+            projectElement.className = 'project-item';
+            projectElement.dataset.id = project.id;
+            
+            // Count notes in this project
+            const projectNotes = this.notes.filter(note => note.projectId === project.id);
+            
+            projectElement.innerHTML = `
+                <div class="project-header ${this.currentProject === project.id ? 'active' : ''}">
+                    <div class="project-title">
+                        <span class="project-color" style="background-color: ${project.color}"></span>
+                        ${project.name}
+                    </div>
+                    <div class="project-controls">
+                        <span class="project-note-count">${projectNotes.length}</span>
+                        <button class="icon-button delete" title="Delete Project">
+                            <svg class="icon" viewBox="0 0 16 16">
+                                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                                <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="project-notes ${this.currentProject === project.id ? 'expanded' : ''}">
+                    ${projectNotes.map(note => `
+                        <div class="project-note" data-id="${note.id}">${note.title}</div>
+                    `).join('')}
+                    ${projectNotes.length === 0 ? `<div class="project-note empty">No notes</div>` : ''}
+                </div>
+            `;
+            
+            // Add event listeners
+            projectElement.querySelector('.project-header').addEventListener('click', () => {
+                const notesEl = projectElement.querySelector('.project-notes');
+                notesEl.classList.toggle('expanded');
+                
+                if (this.currentProject !== project.id) {
+                    this.currentProject = project.id;
+                    this.renderNotes();
+                    
+                    // Update active state
+                    document.querySelectorAll('.project-header').forEach(header => {
+                        header.classList.remove('active');
+                    });
+                    projectElement.querySelector('.project-header').classList.add('active');
+                    
+                    this.showToast(`Switched to project: ${project.name}`, 'info');
+                }
+            });
+            
+            projectElement.querySelector('.icon-button.delete').addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                if (confirm(`Are you sure you want to delete project "${project.name}" and all its notes?`)) {
+                    this.deleteProject(project.id);
+                }
+            });
+            
+            // Add click listeners for notes
+            projectElement.querySelectorAll('.project-note:not(.empty)').forEach(noteEl => {
+                noteEl.addEventListener('click', () => {
+                    const noteId = parseInt(noteEl.dataset.id);
+                    const noteElement = document.querySelector(`.note[data-id="${noteId}"]`);
+                    
+                    if (noteElement) {
+                        noteElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        
+                        // Highlight the note briefly
+                        noteElement.classList.add('highlight');
+                        setTimeout(() => {
+                            noteElement.classList.remove('highlight');
+                        }, 1500);
+                    }
+                });
+            });
+            
+            this.projectsList.appendChild(projectElement);
+        });
+    }
+
+    /**
+     * Render tags in the sidebar
+     */
+    renderTags() {
+        this.tagsContainer.innerHTML = '';
+        
+        Array.from(this.tags).sort().forEach(tag => {
+            const tagElement = document.createElement('div');
+            tagElement.className = `tag ${this.currentTag === tag ? 'active' : ''}`;
+            tagElement.textContent = tag;
+            
+            tagElement.addEventListener('click', () => {
+                this.eventEmitter.emit('tagSelected', tag);
+            });
+            
+            this.tagsContainer.appendChild(tagElement);
+        });
+        
+        // Add a "create tag" button if there are notes
+        if (this.notes.length > 0) {
+            const addTagEl = document.createElement('div');
+            addTagEl.className = 'tag';
+            addTagEl.innerHTML = '<svg class="icon" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg> Add';
+            
+            addTagEl.addEventListener('click', () => {
+                this.showInputToast("Enter tag name:", (name) => {
+                    if (name && !this.tags.has(name)) {
+                        // Add the tag to a note
+                        if (this.notes.length > 0) {
+                            this.addTag(this.notes[0].id, name);
+                        }
+                    }
+                });
+            });
+            
+            this.tagsContainer.appendChild(addTagEl);
+        }
+    }
+
+    /**
+     * Render notes in the main container
+     */
+    renderNotes() {
+        this.notesContainer.innerHTML = '';
+        
+        // Filter notes by project, tag, and search term
+        let filteredNotes = this.notes;
+        
+        if (this.currentProject) {
+            filteredNotes = filteredNotes.filter(note => note.projectId === this.currentProject);
+        }
+        
+        if (this.currentTag) {
+            filteredNotes = filteredNotes.filter(note => 
+                note.tags && note.tags.includes(this.currentTag));
+        }
+        
+        if (this.searchTerm) {
+            filteredNotes = filteredNotes.filter(note => 
+                note.title.toLowerCase().includes(this.searchTerm) || 
+                note.content.toLowerCase().includes(this.searchTerm));
+        }
+        
+        // Sort notes by date (newest first)
+        filteredNotes.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        if (filteredNotes.length === 0) {
+            this.notesContainer.innerHTML = `
+                <div class="empty-state">
+                    <h3>No notes found</h3>
+                    <p>Create a new note or change your filters</p>
+                </div>
+            `;
+            return;
+        }
+        
+        filteredNotes.forEach(note => {
+            const noteElement = document.createElement('div');
+            noteElement.className = 'note';
+            noteElement.dataset.id = note.id;
+            
+            // Find project info
+            const project = this.projects.find(p => p.id === note.projectId);
+            const projectName = project ? project.name : 'No Project';
+            const projectColor = project ? project.color : '#888';
+            
+            noteElement.innerHTML = `
+                <div class="note-header">
+                    <div class="note-title-container">
+                        <div class="note-project">
+                            <span class="project-color" style="background-color: ${projectColor}"></span>
+                            ${projectName}
+                        </div>
+                        <input type="text" class="note-title" value="${note.title}">
+                        ${note.tags && note.tags.length > 0 ? `
+                            <div class="tags-container">
+                                ${note.tags.map(tag => `
+                                    <span class="tag">${tag}</span>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="note-controls">
+                        <button class="icon-button" title="Version History">
+                            <svg class="icon" viewBox="0 0 16 16">
+                                <path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z"/>
+                                <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z"/>
+                            </svg>
+                        </button>
+                        <button class="icon-button" title="Add Tag">
+                            <svg class="icon" viewBox="0 0 16 16">
+                                <path d="M3 2v4.586l7 7L14.586 9l-7-7H3zM2 2a1 1 0 0 1 1-1h4.586a1 1 0 0 1 .707.293l7 7a1 1 0 0 1 0 1.414l-4.586 4.586a1 1 0 0 1-1.414 0l-7-7A1 1 0 0 1 2 6.586V2z"/>
+                                <path d="M5.5 5a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm0 1a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
+                            </svg>
+                        </button>
+                        <button class="icon-button delete" title="Delete Note">
+                            <svg class="icon" viewBox="0 0 16 16">
+                                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                                <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="formatting-menu">
+                    <button data-format="bold">B</button>
+                    <button data-format="italic">I</button>
+                    <button data-format="underline">U</button>
+                    <button data-format="strikethrough">S</button>
+                    <button data-format="h1">H1</button>
+                    <button data-format="h2">H2</button>
+                    <button data-format="h3">H3</button>
+                    <button data-format="p">P</button>
+                    <button data-format="ul">• List</button>
+                    <button data-format="ol">1. List</button>
+                </div>
+                
+                <div class="note-content" contenteditable="true">${note.content}</div>
+                
+                <div class="note-footer">
+                    <div class="note-meta">
+                        <span>By ${note.author}</span>
+                        <span>Last edited: ${note.date}</span>
+                    </div>
+                    <div class="note-versions" title="View version history">
+                        ${note.versions.length} version${note.versions.length !== 1 ? 's' : ''}
+                    </div>
+                </div>
+            `;
+            
+            // Add event listeners
+            const titleInput = noteElement.querySelector('.note-title');
+            titleInput.addEventListener('change', () => {
+                this.updateNote(note.id, 'title', titleInput.value);
+            });
+            
+            const contentElement = noteElement.querySelector('.note-content');
+            let updateTimeout;
+            contentElement.addEventListener('input', () => {
+                clearTimeout(updateTimeout);
+                updateTimeout = setTimeout(() => {
+                    this.updateNote(note.id, 'content', contentElement.innerHTML);
+                }, this.versioningInterval);
+            });
+            
+            // Formatting buttons
+            noteElement.querySelectorAll('.formatting-menu button').forEach(button => {
+                button.addEventListener('click', () => {
+                    this.applyFormatting(note.id, button.dataset.format);
+                });
+            });
+            
+            // Control buttons
+            noteElement.querySelector('.icon-button[title="Version History"]').addEventListener('click', () => {
+                this.showVersionHistory(note.id);
+            });
+            
+            noteElement.querySelector('.note-versions').addEventListener('click', () => {
+                this.showVersionHistory(note.id);
+            });
+            
+            noteElement.querySelector('.icon-button[title="Add Tag"]').addEventListener('click', () => {
+                this.showInputToast("Enter tag name:", (tagName) => {
+                    if (tagName) {
+                        this.addTag(note.id, tagName);
+                    }
+                });
+            });
+            
+            noteElement.querySelector('.icon-button.delete').addEventListener('click', () => {
+                if (confirm("Are you sure you want to delete this note?")) {
+                    this.deleteNote(note.id);
+                }
+            });
+            
+            // Make tags clickable
+            noteElement.querySelectorAll('.tag').forEach(tagEl => {
+                tagEl.addEventListener('click', () => {
+                    this.eventEmitter.emit('tagSelected', tagEl.textContent);
+                });
+            });
+            
+            this.notesContainer.appendChild(noteElement);
+        });
+        
+        this.updateWordCount();
+    }
+
+    /**
+     * Show a toast notification
+     * @param {string} message - Message to display
+     * @param {string} type - Type of toast (success, error, info)
+     * @param {number} duration - Duration in ms
+     */
+    showToast(message, type = 'info', duration = 3000) {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        let icon = '!';
+        if (type === 'success') icon = '✓';
+        if (type === 'error') icon = '✗';
+        
+        toast.innerHTML = `
+            <div class="toast-icon">${icon}</div>
+            <div class="toast-content">
+                <div class="toast-title">${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+                <div class="toast-message">${message}</div>
+            </div>
+            <button class="toast-close">&times;</button>
+        `;
+        
+        toast.querySelector('.toast-close').addEventListener('click', () => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(100px)';
+            setTimeout(() => toast.remove(), 300);
+        });
+        
+        this.toastContainer.appendChild(toast);
+        
+        // Trigger reflow to enable animation
+        toast.offsetHeight;
+        
+        toast.classList.add('visible');
+        
+        if (duration > 0) {
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(100px)';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+    }
+
+    /**
+     * Show a toast with an input field
+     * @param {string} message - Message to display
+     * @param {function} callback - Function to call with input value
+     */
+    showInputToast(message, callback) {
+        const toast = document.createElement('div');
+        toast.className = 'toast info';
+        
+        toast.innerHTML = `
+            <div class="toast-icon">?</div>
+            <div class="toast-content">
+                <div class="toast-title">${message}</div>
+                <input type="text" id="toast-input" placeholder="Type here...">
+            </div>
+            <button class="toast-close">&times;</button>
+        `;
+        
+        const input = toast.querySelector('#toast-input');
+        
+        toast.querySelector('.toast-close').addEventListener('click', () => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(100px)';
+            setTimeout(() => toast.remove(), 300);
+        });
+        
+        input.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                const value = input.value.trim();
+                if (value) {
+                    callback(value);
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateY(100px)';
+                    setTimeout(() => toast.remove(), 300);
+                }
+            }
+        });
+        
+        this.toastContainer.appendChild(toast);
+        
+        // Trigger reflow to enable animation
+        toast.offsetHeight;
+        
+        toast.classList.add('visible');
+        
+        // Focus the input after animation
+        setTimeout(() => {
+            input.focus();
+        }, 300);
+    }
+}
+
+/**
+ * Add export HTML feature
+ * @param {number} noteId - ID of the note to export
+ */
+NotesApp.prototype.exportNoteAsHTML = function(noteId) {
+    const note = this.notes.find(n => n.id === noteId);
+    if (!note) {
+        this.showToast("Note not found", 'error');
+        return;
+    }
+    
+    // Find project info
+    const project = this.projects.find(p => p.id === note.projectId);
+    const projectName = project ? project.name : 'No Project';
+    
+    // Create HTML content
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${note.title}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .note-header {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .note-project {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .note-title {
+            font-size: 2rem;
+            margin: 0 0 10px 0;
+        }
+        .note-meta {
+            font-size: 0.8rem;
+            color: #777;
+            margin-top: 5px;
+        }
+        .note-content {
+            margin-top: 20px;
+        }
+        .tags {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .tag {
+            background: #f0f0f0;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            color: #555;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="note-header">
+        <div class="note-project">Project: ${projectName}</div>
+        <h1 class="note-title">${note.title}</h1>
+        <div class="note-meta">
+            <div>By ${note.author}</div>
+            <div>Last edited: ${note.date}</div>
+        </div>
+    </div>
+    
+    <div class="note-content">
+        ${note.content}
+    </div>
+    
+    ${note.tags && note.tags.length > 0 ? `
+    <div class="tags">
+        ${note.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+    </div>
+    ` : ''}
+    
+    <div class="footer">
+        Exported from Modern Notes - ${new Date().toLocaleString()}
+    </div>
+</body>
+</html>`;
+    
+    // Create download link
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${note.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.html`;
+    a.click();
+    
+    // Clean up
+    URL.revokeObjectURL(url);
+    this.showToast("Note exported successfully", 'success');
+};
+
+// Add export button to note rendering
+const originalRenderNotes = NotesApp.prototype.renderNotes;
+NotesApp.prototype.renderNotes = function() {
+    originalRenderNotes.call(this);
+    
+    // Add export button to each note
+    document.querySelectorAll('.note').forEach(noteEl => {
+        const noteId = parseInt(noteEl.dataset.id);
+        const controlsEl = noteEl.querySelector('.note-controls');
+        
+        if (controlsEl) {
+            const exportBtn = document.createElement('button');
+            exportBtn.className = 'icon-button';
+            exportBtn.title = 'Export as HTML';
+            exportBtn.innerHTML = `
+                <svg class="icon" viewBox="0 0 16 16">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                </svg>
+            `;
+            
+            exportBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.exportNoteAsHTML(noteId);
+            });
+            
+            // Insert before delete button
+            const deleteBtn = controlsEl.querySelector('.delete');
+            controlsEl.insertBefore(exportBtn, deleteBtn);
+        }
+    });
+};
+
+// Initialize the application when the DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.notesApp = new NotesApp();
+}); version of a note
+     * @param {number} noteId - ID of the note
+     * @param {number} versionIndex - Index of the version to restore
+     */
+    restoreVersion(noteId, versionIndex) {
+        const note = this.notes.find(n => n.id === noteId);
+        if (!note) return;
+
+        const versionToRestore = note.versions[versionIndex];
+        const newVersion = {
+            content: note.content,
+            date: new Date().toLocaleString()
+        };
+        
+        // Add current content as a new version
+        note.versions.push(newVersion);
+        
+        // Restore the selected version content
+        note.content = versionToRestore.content;
+        note.date = new Date().
