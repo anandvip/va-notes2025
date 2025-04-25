@@ -1,34 +1,4 @@
 /**
-   * Sanitize HTML content to prevent XSS attacks
-   * @param {string} html - HTML content to sanitize
-   * @returns {string} - Sanitized HTML
-   */
-function sanitizeHtml(html) {
-  if (!html) return '';
-  
-  const temp = document.createElement('div');
-  temp.innerHTML = html;
-  
-  // Remove script tags
-  const scripts = temp.querySelectorAll('script');
-  scripts.forEach(function(script) {
-    script.remove();
-  });
-  
-  // Remove potentially dangerous attributes
-  const allElements = temp.querySelectorAll('*');
-  const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 
-                        'onkeydown', 'onkeypress', 'onkeyup', 'onchange', 'onsubmit',
-                        'javascript:', 'data-', 'href="javascript'];
-  
-  allElements.forEach(function(el) {
-    dangerousAttrs.forEach(function(attr) {
-      el.removeAttribute(attr);
-    });
-  });
-  
-  return temp.innerHTML;
-}/**
  * Modern Notes Application
  * A note-taking app with tagging, projects, and version control
  */
@@ -113,7 +83,9 @@ class DatabaseService {
       
       // Create object stores if they don't exist
       if (!db.objectStoreNames.contains('notes')) {
-        db.createObjectStore('notes', { keyPath: 'id' });
+        const notesStore = db.createObjectStore('notes', { keyPath: 'id' });
+        notesStore.createIndex('projectId', 'projectId', { unique: false });
+        notesStore.createIndex('date', 'date', { unique: false });
       }
       
       if (!db.objectStoreNames.contains('projects')) {
@@ -123,6 +95,7 @@ class DatabaseService {
     
     request.onsuccess = (event) => {
       this.db = event.target.result;
+      console.log("Database initialized successfully");
       if (typeof this.onReady === 'function') {
         this.onReady();
       }
@@ -151,6 +124,28 @@ class DatabaseService {
   }
 
   /**
+   * Get a specific item from a store
+   * @param {string} storeName - Name of the object store
+   * @param {string|number} id - ID of the item to get
+   * @returns {Promise<Object>} - Promise resolving to the item
+   */
+  get(storeName, id) {
+    return new Promise((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+      
+      const transaction = this.db.transaction(storeName, 'readonly');
+      const store = transaction.objectStore(storeName);
+      const request = store.get(id);
+      
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
    * Add or update an item in a store
    * @param {string} storeName - Name of the object store
    * @param {Object} item - Item to add or update
@@ -168,7 +163,10 @@ class DatabaseService {
       const request = store.put(item);
       
       request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      request.onerror = (event) => {
+        console.error("Error putting data in IndexedDB:", event.target.error);
+        reject(request.error);
+      };
     });
   }
 
@@ -250,6 +248,8 @@ class ToastService {
     
     const button = document.createElement('button');
     button.textContent = 'OK';
+    button.className = 'gradient-button';
+    button.style.marginTop = '8px';
     button.addEventListener('click', () => {
       callback(input.value);
       toast.classList.remove('visible');
@@ -367,7 +367,7 @@ class NotesApp {
     const interval = parseInt(localStorage.getItem('versioningInterval'), 10);
     if (!isNaN(interval)) {
       this.versioningInterval = interval;
-      this.elements.versionFrequency.value = interval;
+      this.elements.versionFrequency.value = interval.toString();
     }
     
     // Sidebar state
@@ -403,6 +403,8 @@ class NotesApp {
     try {
       // Load notes
       const notes = await this.db.getAll('notes');
+      console.log('Loaded notes from IndexedDB:', notes);
+      
       this.notes = notes.map(note => ({
         ...note,
         versions: Array.isArray(note.versions) 
@@ -417,6 +419,7 @@ class NotesApp {
       
       // Load projects
       this.projects = await this.db.getAll('projects');
+      console.log('Loaded projects from IndexedDB:', this.projects);
       
       // Initial render
       this.renderProjects();
@@ -521,7 +524,7 @@ class NotesApp {
     this.sidebarCollapsed = !this.sidebarCollapsed;
     this.elements.sidebar.classList.toggle('collapsed', this.sidebarCollapsed);
     this.elements.mainContent.classList.toggle('full-width', this.sidebarCollapsed);
-    localStorage.setItem('sidebarCollapsed', this.sidebarCollapsed);
+    localStorage.setItem('sidebarCollapsed', this.sidebarCollapsed.toString());
   }
 
   /**
@@ -536,11 +539,11 @@ class NotesApp {
 
   /**
    * Update the versioning interval
-   * @param {number} value - New interval in milliseconds
+   * @param {number|string} value - New interval in milliseconds
    */
   updateVersioningInterval(value) {
     this.versioningInterval = parseInt(value, 10) || 0;
-    localStorage.setItem('versioningInterval', this.versioningInterval);
+    localStorage.setItem('versioningInterval', this.versioningInterval.toString());
     
     const seconds = this.versioningInterval / 1000;
     this.toastService.show(
@@ -555,14 +558,17 @@ class NotesApp {
    * @param {string} content - Note content
    */
   createNote(title = 'New Note', content = '') {
-    const now = new Date().toLocaleString();
+    const now = new Date().toISOString();
+    const formattedDate = new Date(now).toLocaleString();
+    
     const note = {
-      id: Date.now(),
+      id: Date.now().toString(),
       title,
       content,
       author: this.elements.authorInput.value || 'Anonymous',
       projectId: this.currentProject,
       date: now,
+      formattedDate: formattedDate,
       tags: [],
       versions: [{ content, date: now }]
     };
@@ -570,6 +576,7 @@ class NotesApp {
     this.notes.unshift(note);
     this.db.put('notes', note)
       .then(() => {
+        console.log('Note created successfully:', note);
         this.renderNotes();
         this.updateWordCount();
         this.toastService.show('Note created', 'success');
@@ -578,6 +585,38 @@ class NotesApp {
         console.error('Error creating note:', error);
         this.toastService.show('Error creating note', 'error');
       });
+  }
+
+  /**
+   * Sanitize HTML content to prevent XSS attacks
+   * @param {string} html - HTML content to sanitize
+   * @returns {string} - Sanitized HTML
+   */
+  sanitizeHtml(html) {
+    if (!html) return '';
+    
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    
+    // Remove script tags
+    const scripts = temp.querySelectorAll('script');
+    scripts.forEach(function(script) {
+      script.remove();
+    });
+    
+    // Remove potentially dangerous attributes
+    const allElements = temp.querySelectorAll('*');
+    const dangerousAttrs = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 
+                          'onkeydown', 'onkeypress', 'onkeyup', 'onchange', 'onsubmit',
+                          'javascript:', 'data-', 'href="javascript'];
+    
+    allElements.forEach(function(el) {
+      dangerousAttrs.forEach(function(attr) {
+        el.removeAttribute(attr);
+      });
+    });
+    
+    return temp.innerHTML;
   }
 
   /**
@@ -604,14 +643,18 @@ class NotesApp {
 
   /**
    * Update a note's field
-   * @param {number} id - Note ID
+   * @param {string|number} id - Note ID
    * @param {string} field - Field to update
    * @param {*} value - New value
    */
   updateNote(id, field, value) {
-    const note = this.notes.find(n => n.id === id);
-    if (!note) return;
+    const noteIndex = this.notes.findIndex(n => n.id == id);
+    if (noteIndex === -1) {
+      console.error('Note not found for update:', id);
+      return;
+    }
     
+    const note = { ...this.notes[noteIndex] };
     const oldValue = note[field];
     
     // Sanitize HTML content if needed
@@ -620,7 +663,9 @@ class NotesApp {
     }
     
     note[field] = value;
-    note.date = new Date().toLocaleString();
+    const now = new Date().toISOString();
+    note.date = now;
+    note.formattedDate = new Date(now).toLocaleString();
     
     // If content was updated, extract tags
     if (field === 'content') {
@@ -642,44 +687,57 @@ class NotesApp {
     // Handle version history for content changes
     if (field === 'content' && value !== oldValue && this.versioningInterval > 0) {
       try {
-        const lastVersion = note.versions[note.versions.length - 1];
-        const timeSinceLastVersion = Date.now() - new Date(lastVersion.date).getTime();
+        if (!Array.isArray(note.versions)) {
+          note.versions = [];
+        }
         
-        if (timeSinceLastVersion >= this.versioningInterval) {
-          // Add new version
-          note.versions.push({ content: value, date: note.date });
+        const lastVersion = note.versions.length > 0 ? note.versions[note.versions.length - 1] : null;
+        
+        if (lastVersion) {
+          const timeSinceLastVersion = Date.now() - new Date(lastVersion.date).getTime();
+          
+          if (timeSinceLastVersion >= this.versioningInterval) {
+            // Add new version
+            note.versions.push({ content: value, date: note.date });
+          } else {
+            // Update latest version
+            lastVersion.content = value;
+            lastVersion.date = note.date;
+          }
         } else {
-          // Update latest version
-          lastVersion.content = value;
-          lastVersion.date = note.date;
+          // No versions exist, create first one
+          note.versions.push({ content: value, date: note.date });
         }
       } catch (error) {
         console.error('Error updating version history:', error);
         // Ensure note has versions array
-        if (!Array.isArray(note.versions)) {
-          note.versions = [{ content: value, date: note.date }];
-        }
+        note.versions = [{ content: value, date: note.date }];
       }
     }
     
+    // Update notes array
+    this.notes[noteIndex] = note;
+    
+    // Save to database
     this.db.put('notes', note)
       .then(() => {
+        console.log(`Note ${id} updated:`, field, value);
         this.updateWordCount();
       })
       .catch(error => {
-        console.error('Error updating note:', error);
+        console.error(`Error updating note ${id}:`, error);
         this.toastService.show('Error updating note', 'error');
       });
   }
 
   /**
    * Delete a note
-   * @param {number} id - Note ID 
+   * @param {string|number} id - Note ID 
    */
   deleteNote(id) {
     this.db.delete('notes', id)
       .then(() => {
-        this.notes = this.notes.filter(note => note.id !== id);
+        this.notes = this.notes.filter(note => note.id != id);
         this.renderNotes();
         this.updateTags();
         this.updateWordCount();
@@ -697,7 +755,7 @@ class NotesApp {
    */
   addProject(name) {
     const project = {
-      id: Date.now(),
+      id: Date.now().toString(),
       name,
       color: this.projectColors[Math.floor(Math.random() * this.projectColors.length)]
     };
@@ -705,6 +763,7 @@ class NotesApp {
     this.projects.push(project);
     this.db.put('projects', project)
       .then(() => {
+        console.log('Project created:', project);
         this.renderProjects();
         this.toastService.show(`Project "${name}" created`, 'success');
       })
@@ -716,16 +775,16 @@ class NotesApp {
 
   /**
    * Delete a project and its notes
-   * @param {number} id - Project ID
+   * @param {string|number} id - Project ID
    */
   deleteProject(id) {
     // First delete the project
     this.db.delete('projects', id)
       .then(() => {
-        this.projects = this.projects.filter(project => project.id !== id);
+        this.projects = this.projects.filter(project => project.id != id);
         
         // Then delete all notes in that project
-        const projectNotes = this.notes.filter(note => note.projectId === id);
+        const projectNotes = this.notes.filter(note => note.projectId == id);
         const deletePromises = projectNotes.map(note => {
           return this.db.delete('notes', note.id);
         });
@@ -734,7 +793,7 @@ class NotesApp {
       })
       .then(() => {
         // Update notes array after deletion
-        this.notes = this.notes.filter(note => note.projectId !== id);
+        this.notes = this.notes.filter(note => note.projectId != id);
         this.renderProjects();
         this.renderNotes();
         this.updateTags();
@@ -749,11 +808,11 @@ class NotesApp {
 
   /**
    * Add a tag to a note
-   * @param {number} noteId - Note ID
+   * @param {string|number} noteId - Note ID
    * @param {string} tag - Tag to add
    */
   addTag(noteId, tag) {
-    const note = this.notes.find(n => n.id === noteId);
+    const note = this.notes.find(n => n.id == noteId);
     if (!note) return;
     
     if (!note.tags) {
@@ -777,11 +836,11 @@ class NotesApp {
 
   /**
    * Remove a tag from a note
-   * @param {number} noteId - Note ID
+   * @param {string|number} noteId - Note ID
    * @param {string} tag - Tag to remove
    */
   removeTag(noteId, tag) {
-    const note = this.notes.find(n => n.id === noteId);
+    const note = this.notes.find(n => n.id == noteId);
     if (!note || !note.tags) return;
     
     note.tags = note.tags.filter(t => t !== tag);
@@ -833,14 +892,14 @@ class NotesApp {
     projectsList.innerHTML = '';
     
     this.projects.forEach(project => {
-      const projectNotes = this.notes.filter(note => note.projectId === project.id);
+      const projectNotes = this.notes.filter(note => note.projectId == project.id);
       
       const projectItem = document.createElement('div');
       projectItem.className = 'project-item';
       projectItem.dataset.id = project.id;
       
       const projectHeader = document.createElement('div');
-      projectHeader.className = `project-header ${this.currentProject === project.id ? 'active' : ''}`;
+      projectHeader.className = `project-header ${this.currentProject == project.id ? 'active' : ''}`;
       
       const projectTitle = document.createElement('div');
       projectTitle.className = 'project-title';
@@ -866,7 +925,7 @@ class NotesApp {
       
       // Add click event
       projectHeader.addEventListener('click', () => {
-        this.currentProject = this.currentProject === project.id ? null : project.id;
+        this.currentProject = this.currentProject == project.id ? null : project.id;
         this.renderProjects(); // Update active state
         this.renderNotes();
         
@@ -891,7 +950,7 @@ class NotesApp {
     let filteredNotes = [...this.notes];
     
     if (this.currentProject) {
-      filteredNotes = filteredNotes.filter(note => note.projectId === this.currentProject);
+      filteredNotes = filteredNotes.filter(note => note.projectId == this.currentProject);
     }
     
     if (this.currentTag) {
@@ -903,7 +962,7 @@ class NotesApp {
     if (this.searchTerm) {
       filteredNotes = filteredNotes.filter(note => 
         note.title.toLowerCase().includes(this.searchTerm) || 
-        note.content.toLowerCase().includes(this.searchTerm)
+        (note.content && note.content.toLowerCase().includes(this.searchTerm))
       );
     }
     
@@ -930,7 +989,7 @@ class NotesApp {
       // Note project indicator
       let projectInfo = '';
       if (note.projectId) {
-        const project = this.projects.find(p => p.id === note.projectId);
+        const project = this.projects.find(p => p.id == note.projectId);
         if (project) {
           projectInfo = `
             <div class="note-project">
@@ -940,6 +999,9 @@ class NotesApp {
           `;
         }
       }
+      
+      // Format date for display
+      const displayDate = note.formattedDate || new Date(note.date).toLocaleString();
       
       // Note content
       noteElement.innerHTML = `
@@ -957,10 +1019,10 @@ class NotesApp {
             </button>
           </div>
         </div>
-        <div class="note-content" contenteditable="true">${note.content}</div>
+        <div class="note-content" contenteditable="true">${note.content || ''}</div>
         <div class="note-footer">
-          <span>${note.author || 'Anonymous'} • ${note.date}</span>
-          <span class="note-versions">${note.versions.length} version${note.versions.length !== 1 ? 's' : ''}</span>
+          <span>${note.author || 'Anonymous'} • ${displayDate}</span>
+          <span class="note-versions">${(note.versions && note.versions.length) || 1} version${(note.versions && note.versions.length) !== 1 ? 's' : ''}</span>
         </div>
       `;
       
@@ -984,10 +1046,8 @@ class NotesApp {
       
       // Add contenteditable blur event to ensure saving completes
       contentElement.addEventListener('blur', () => {
-        if (contentUpdateTimeout) {
-          clearTimeout(contentUpdateTimeout);
-          this.updateNote(note.id, 'content', contentElement.innerHTML);
-        }
+        clearTimeout(contentUpdateTimeout);
+        this.updateNote(note.id, 'content', contentElement.innerHTML);
       });
       
       const deleteButton = noteElement.querySelector('.delete');
@@ -1023,7 +1083,7 @@ class NotesApp {
         versionItem.className = 'version-item';
         
         const versionNumber = note.versions.length - index;
-        const versionDate = version.date;
+        const versionDate = new Date(version.date).toLocaleString();
         
         versionItem.innerHTML = `
           <div class="version-info">
@@ -1051,7 +1111,7 @@ class NotesApp {
           // Create a temporary div to show the content
           const contentPreview = document.createElement('div');
           contentPreview.className = 'version-content-preview';
-          contentPreview.innerHTML = version.content;
+          contentPreview.innerHTML = version.content || 'Empty note';
           
           // Replace existing preview if any
           const existingPreview = versionItem.querySelector('.version-content-preview');
@@ -1079,7 +1139,7 @@ class NotesApp {
     projectsGrid.innerHTML = '';
     
     this.projects.forEach(project => {
-      const projectNotes = this.notes.filter(note => note.projectId === project.id);
+      const projectNotes = this.notes.filter(note => note.projectId == project.id);
       
       const projectCard = document.createElement('div');
       projectCard.className = 'project-card';
@@ -1204,7 +1264,7 @@ class NotesApp {
     
     // Calculate word count across all notes
     const totalText = this.notes
-      .map(note => this.stripHtml(note.content))
+      .map(note => this.stripHtml(note.content || ''))
       .join(' ');
     
     const wordCount = totalText
